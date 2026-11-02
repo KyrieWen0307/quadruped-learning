@@ -23,7 +23,7 @@ def run_pd(Kp,Kd,disturbance=False):
         dq=data.qvel[0]
         tau=Kp*(q_des-q)+Kd*(0-dq)
         data.ctrl[1]=np.clip(tau,-5.0,5.0)
-        data.qfrc_applied[0]=2.0 if disturbance and data.time>3.0 else 0.0
+        data.qfrc_applied[0]=-2.0 if disturbance and data.time>3.0 else 0.0
 
         mujoco.mj_step(model,data)
         ts.append(data.time)
@@ -33,7 +33,7 @@ def run_pd(Kp,Kd,disturbance=False):
 
 plt.figure(figsize=(8, 4))
 # 实验 1:固定 Kp,只改变 Kd,看欠阻尼 / 临界附近 / 过阻尼三种响应。
-for Kd, label in [(0.5, "A: Kd=0.5"), (12.0, "B: Kd=12"), (40.0, "C: Kd=40")]:
+for Kd, label in [(0.5, "A: Kd=0.5"), (3.65, "B: Kd=3.65"), (12.0, "C: Kd=12")]:
     t, q = run_pd(Kp=40.0, Kd=Kd)
     plt.plot(t, q, label=label)
 plt.axhline(q_des, linestyle="--", color="black", label="target")
