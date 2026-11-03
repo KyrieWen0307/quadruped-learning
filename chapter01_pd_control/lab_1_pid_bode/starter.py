@@ -1,7 +1,11 @@
-"""Lab 1 filled starter：Pupper HFE 正弦跟踪和实测 Bode 图。
+"""Lab 1 TODO starter：Pupper HFE 正弦跟踪和实测 Bode 图。
 
-作者侧先写 `starter_todo.py`，再把三处 TODO 填成这份 `starter.py`。
-交付学生版时抽走本文件，并把 `starter_todo.py` 改名为 `starter.py`。
+作者侧先运行：
+
+    uv run python lab_1_pid_bode/starter_todo.py
+
+它应该停在第一个 NotImplementedError。交付学生版时，抽走已填完的
+`starter.py`，再把本文件改名为 `starter.py`。
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ from shared.controllers.pd_controller import (  # noqa: E402
 from shared.viz import gif_utils, plot_utils  # noqa: E402
 
 
-LAB_DIR = EXERCISES_DIR / "lab_1_pid_bode"
+LAB_DIR = Path(__file__).resolve().parent
 MODEL_PATH = LAB_DIR / "models" / "scene.xml"
 
 CONFIG = SimulationConfig(dt=0.005, max_torque=3.0)
@@ -47,7 +51,7 @@ DAMPING_RATIO = 0.7
 FREQUENCIES_HZ = (0.2, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0)
 BODE_SECONDS = 5.0
 BODE_SETTLE_SECONDS = 1.0
-GIF_SECONDS = 6.0
+GIF_SECONDS = 12.0
 GIF_FREQUENCY_HZ = 0.3
 SINE_SECONDS = 10.0
 GIF_FPS = 15
@@ -80,16 +84,17 @@ def read_hfe_reflected_inertia(model: mujoco.MjModel, data: mujoco.MjData) -> fl
 
     mujoco.mj_forward(model, data)
     _, hfe_dof_id = _joint_qpos_qvel_ids(model, CONFIG.joint_name)
+    # TODO 1: 用 mujoco.mj_fullM 展开 data.qM，然后返回 HFE 对角项。
     mass_matrix = np.zeros((model.nv, model.nv))
     mujoco.mj_fullM(model, mass_matrix, data.qM)
-    return float(mass_matrix[hfe_dof_id, hfe_dof_id])
-
+    return mass_matrix[hfe_dof_id,hfe_dof_id]
 
 def solve_kd(kp: float, inertia: float, zeta: float = DAMPING_RATIO) -> float:
     """任务 B：按二阶系统经验公式选择阻尼。"""
 
-    return float(2.0 * zeta * math.sqrt(kp * inertia))
-
+    # TODO 2: 计算 Kd = 2 * zeta * sqrt(Kp * I_hfe)。
+    kd=2*zeta*math.sqrt(kp*inertia)
+    return kd
 
 def default_gains() -> tuple[PDGains, float]:
     model, data = load_model()
@@ -101,7 +106,11 @@ def default_gains() -> tuple[PDGains, float]:
 def _pd_torque(gains: PDGains, target: JointTarget, q: float, qdot: float) -> float:
     """任务 A/C/D 共用这一条控制律。"""
 
-    return float(gains.kp * (target.q - q) + gains.kd * (target.qdot - qdot))
+    # TODO 3: 实现 tau = Kp(q_des - q) + Kd(qdot_des - qdot)。
+    p=gains.kp*(target.q-q)
+    d=gains.kd*(target.qdot-qdot)
+    tau=p+d
+    return tau
 
 
 def simulate_tracking(
@@ -392,7 +401,28 @@ def main() -> None:
     print(f"I_hfe={inertia:.6g}, Kp={gains.kp:.3g}, Kd={gains.kd:.6g}")
     print(f"任务 A 最终误差：{final_error:.4f} rad")
     print("Stretch 提示：任务 A-D 跑通后，可以比较 Kp*、2Kp*、5Kp* 三条 Bode 曲线。")
+    sine_trace = run_sine_tracking(
+        frequency_hz=GIF_FREQUENCY_HZ,
+        seconds=GIF_SECONDS,
+        gains=gains,
+        inertia=inertia,
+        capture_frames=True,
+    )
+    gif_path = LAB_DIR / "portfolio" / "hfe_sine_0p3hz.gif"
+    save_gif(sine_trace, gif_path)
+    print(f"任务 C GIF 已保存：{gif_path}")
+    bode_points = run_bode_sweep(gains=gains, inertia=inertia)
 
-
+    for point in bode_points:
+        print(
+            f"频率={point.frequency_hz:g} Hz，"
+            f"幅值比={point.gain:.3f}，"
+            f"增益={point.gain_db:.2f} dB，"
+            f"相位差={point.phase_deg:.2f}°"
+        )
+    bode_path = LAB_DIR / "portfolio" / "bode_pupper_hfe.png"
+    save_bode_plot(bode_points, bode_path, gains, inertia)
+    print(f"任务 D Bode 图已保存：{bode_path}")
+    
 if __name__ == "__main__":
     main()

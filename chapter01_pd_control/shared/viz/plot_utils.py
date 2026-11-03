@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Iterable
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import NullFormatter
 import numpy as np
 
 from shared.controllers.pd_controller import BodePoint
@@ -23,6 +24,8 @@ def apply_theme() -> None:
             "axes.spines.right": False,
             "font.size": 10,
             "font.sans-serif": [
+                "Microsoft YaHei",
+                "SimHei",
                 "PingFang SC",
                 "Heiti TC",
                 "Songti SC",
@@ -76,6 +79,7 @@ def bode_figure(
     ax_phase.legend(loc="best")
     ax_phase.set_xticks(freqs)
     ax_phase.set_xticklabels([f"{f:g}" for f in freqs])
+    ax_phase.xaxis.set_minor_formatter(NullFormatter())
 
     fig.suptitle(title)
     if subtitle:

@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 def _font(size: int = 18) -> ImageFont.ImageFont:
     candidates = (
+        "msyh.ttc",
+        "simhei.ttf",
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
         "/System/Library/Fonts/Supplemental/Songti.ttc",
@@ -174,13 +176,17 @@ def write_gif(
     rgb_images = [Image.fromarray(_resize_frame(f, width)).convert("RGB") for f in _subsample_frames(frames, max_frames)]
     palette_image = _build_global_palette(rgb_images, palette_colors)
     output_frames = [image.quantize(palette=palette_image, dither=Image.Dither.NONE) for image in rgb_images]
-    duration_ms = int(round(1000 / fps))
+    # GIF 帧时长以 10 ms 为单位，累计取整可避免每帧取整造成整段动画加速。
+    durations_ms = [
+        10 * (round((i + 1) * 100 / fps) - round(i * 100 / fps))
+        for i in range(len(output_frames))
+    ]
     first, rest = output_frames[0], output_frames[1:]
     first.save(
         path,
         save_all=True,
         append_images=rest,
-        duration=duration_ms,
+        duration=durations_ms,
         loop=0,
         optimize=True,
         disposal=2,

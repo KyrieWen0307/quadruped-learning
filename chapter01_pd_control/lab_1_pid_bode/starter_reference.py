@@ -1,11 +1,7 @@
-"""Lab 1 TODO starter：Pupper HFE 正弦跟踪和实测 Bode 图。
+"""Lab 1 filled starter：Pupper HFE 正弦跟踪和实测 Bode 图。
 
-作者侧先运行：
-
-    uv run python lab_1_pid_bode/starter_todo.py
-
-它应该停在第一个 NotImplementedError。交付学生版时，抽走已填完的
-`starter.py`，再把本文件改名为 `starter.py`。
+作者侧先写 `starter_todo.py`，再把三处 TODO 填成这份 `starter.py`。
+交付学生版时抽走本文件，并把 `starter_todo.py` 改名为 `starter.py`。
 """
 
 from __future__ import annotations
@@ -41,7 +37,7 @@ from shared.controllers.pd_controller import (  # noqa: E402
 from shared.viz import gif_utils, plot_utils  # noqa: E402
 
 
-LAB_DIR = Path(__file__).resolve().parent
+LAB_DIR = EXERCISES_DIR / "lab_1_pid_bode"
 MODEL_PATH = LAB_DIR / "models" / "scene.xml"
 
 CONFIG = SimulationConfig(dt=0.005, max_torque=3.0)
@@ -84,15 +80,15 @@ def read_hfe_reflected_inertia(model: mujoco.MjModel, data: mujoco.MjData) -> fl
 
     mujoco.mj_forward(model, data)
     _, hfe_dof_id = _joint_qpos_qvel_ids(model, CONFIG.joint_name)
-    # TODO 1: 用 mujoco.mj_fullM 展开 data.qM，然后返回 HFE 对角项。
-    raise NotImplementedError("TODO 1: 用 mujoco.mj_fullM 读取 I_hfe")
+    mass_matrix = np.zeros((model.nv, model.nv))
+    mujoco.mj_fullM(model, mass_matrix, data.qM)
+    return float(mass_matrix[hfe_dof_id, hfe_dof_id])
 
 
 def solve_kd(kp: float, inertia: float, zeta: float = DAMPING_RATIO) -> float:
     """任务 B：按二阶系统经验公式选择阻尼。"""
 
-    # TODO 2: 计算 Kd = 2 * zeta * sqrt(Kp * I_hfe)。
-    raise NotImplementedError("TODO 2: 根据 Kp、inertia 和 zeta 计算 Kd")
+    return float(2.0 * zeta * math.sqrt(kp * inertia))
 
 
 def default_gains() -> tuple[PDGains, float]:
@@ -105,8 +101,7 @@ def default_gains() -> tuple[PDGains, float]:
 def _pd_torque(gains: PDGains, target: JointTarget, q: float, qdot: float) -> float:
     """任务 A/C/D 共用这一条控制律。"""
 
-    # TODO 3: 实现 tau = Kp(q_des - q) + Kd(qdot_des - qdot)。
-    raise NotImplementedError("TODO 3: 实现 PD 控制律")
+    return float(gains.kp * (target.q - q) + gains.kd * (target.qdot - qdot))
 
 
 def simulate_tracking(

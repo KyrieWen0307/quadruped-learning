@@ -5,15 +5,13 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from starter import GIF_FREQUENCY_HZ, run_experiment, save_bode_plot, save_gif
+from starter import GIF_FPS, GIF_FREQUENCY_HZ, run_experiment, save_bode_plot, save_gif
 
 
 LAB_DIR = Path(__file__).resolve().parent
 PORTFOLIO_DIR = LAB_DIR / "portfolio"
 GIF_WRITE_KWARGS = {
-    "fps": 8,
-    "max_frames": 45,
-    "width": 560,
+    "fps": GIF_FPS,
 }
 
 

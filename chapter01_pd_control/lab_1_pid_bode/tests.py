@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from starter import AMPLITUDE_RAD, default_gains, run_bode_sweep, run_constant_hold
+from chapter01_pd_control.lab_1_pid_bode.starter_reference import AMPLITUDE_RAD, default_gains, run_bode_sweep, run_constant_hold
 
 
 def test_task_a_constant_hold() -> None:
