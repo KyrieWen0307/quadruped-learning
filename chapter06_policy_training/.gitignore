@@ -1,0 +1,19 @@
+# Local training runs, logs, and virtual environments
+outputs/
+.venv/
+.venv-mjx/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Upstream author benchmark artifacts (keep locally for reference, don't push to personal repo)
+reports/
+
+# Lab 6 local TensorBoard logs and downloaded upstream RTNeural policy
+lab6/lab_6_rl_pupper/tb/
+lab6/shared/rl/policies/
+lab6/.venv-mjx/
+
+# Ignore intermediate checkpoints, keep final Lab 6 deliverable model
+*.zip
+!lab6/lab_6_rl_pupper/portfolio/pupper_ppo.zip
