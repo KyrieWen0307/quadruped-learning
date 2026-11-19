@@ -1,2 +1,27 @@
+# Python caches & build artifacts
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Virtual environments
+.venv/
+.venv-mjx/
+venv/
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Training logs & TensorBoard artifacts
+**/tb/
+**/runs/
+*.tfevents*
+
+# Large downloaded upstream policies (re-fetchable via fetch_policies.sh)
+chapter06_policy_training/lab6/shared/rl/policies/
