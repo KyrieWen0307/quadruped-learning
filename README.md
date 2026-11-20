@@ -1,6 +1,6 @@
 # Quadruped Learning — 从零到一搭建四足机器人
 
-个人学习与实践仓库，基于 Datawhale 开源教程 [《从零到一搭建四足机器人》](https://datawhalechina.github.io/dive-into-embodied-ai/docs/practices/quadruped/cs123/)（Stanford CS123 Pupper v3 体系），在 **Windows + MuJoCo** 环境下从单关节 PD 控制一路做到四足强化学习步态策略训练。
+个人学习与实践仓库，基于 Datawhale 开源教程 [《从零到一搭建四足机器人》](https://datawhalechina.github.io/dive-into-embodied-ai/docs/practices/quadruped/cs123/)（Stanford CS123 Pupper v3 体系），在 **Windows + MuJoCo** 环境下从单关节 PD 控制一路做到四足强化学习步态策略训练与大语言模型具身控制。
 
 > **写作原则**：本仓库只记录实际跑通并核对过的结果，对实验边界（例如开环步态依赖机身 weld、524k 步基础 PPO 尚不能稳定跟踪速度）如实标注。
 
@@ -16,6 +16,7 @@
 | **第 4 章** | 搭建四足机器人（MJCF） | 固定/浮动基座站立、三形态对照 | — | ✅ 已完成 | `pupper_v3.xml` + 13 个 STL、站高曲线、增益热图 |
 | **第 5 章** | 步态控制 | 开环 walk / trot / pace / bound / gallop | — | ✅ 已完成 | 真实 Pupper 数值 IK + 步态时钟演示 |
 | **第 6 章** | 强化学习策略训练（PPO） | 基础 45 维 PPO（524k 步 CPU 训练与评估） | `lab_6_rl_pupper` | 🚧 进行中 | Lab 6 已完成 TODO 2（540 维观测），待完成 TODO 1（18 项奖励）与 TODO 3（命令采样） |
+| **第 7 章** | 语言控制与具身 Agent | 工具 API、OpenAI SDK 原生 ReAct 循环、实时 3D REPL | `lab_7_llm_control` | ✅ 已完成 | L1–L5 任务展柜 GIF、`agent_traces.md`、三段式工具契约与 PI 航向保持消融实验 |
 
 ---
 
@@ -106,6 +107,42 @@
 
 ---
 
+### 第 7 章 · 语言控制与具身 Agent（Lab 7）
+
+- **实践内容**：完成正式 `lab_7_llm_control` 全部 3 个手写 TODO——工具安全分发与软失败（`dispatch()`）、OpenAI-compatible SDK 原生多轮 `tool_calls` 循环（`run_agent()`，对接 DeepSeek `deepseek-chat`）及 12 fps 离屏采帧录屏管线（`render_task_gif()`），通过全部 7 项离线数值断言（`tests.py`）；另外搭建了带 MuJoCo 实时 3D Viewer 与 `Ctrl+C` 急停的交互式文本 REPL（`repl.py`）。
+- **L1–L5 标准任务展柜实测**（完整轨迹见 `chapter07_llm_control/lab_7_llm_control/portfolio/agent_traces.md`）：
+  - **L1 原子 / L2 带数字**：底层策略存在速度跟踪误差（`walk(0.3, 0, 3.0)` 实测前进 `0.699 m`），但大脑读取 `final_pose` 后自动补走微调，L2 精准停在 `x = 0.986 m`（误差 `1.4 cm`）。
+  - **L3 多步顺序**：前进 1 米后经 4 次右转闭环微调，最终 `yaw = -1.578 rad`（距 `-π/2` 误差仅 `0.4°`）。
+  - **L4 ReAct 反馈**：自主计算方位角 `atan2(1, 2) ≈ 26.6°`，多轮迭代后停在 `(2.041, 1.071)`（距目标 `(2, 1)` 约 `8 cm`）。
+  - **L5 容错降级**：`TOOLS` schema 的量程前置约束使 `deepseek-chat` 主动将 `3 m/s` 降速至上限 `1.5 m/s`；运行时越界与非数字参数软失败由 `tests.py` 验证绝不 `raise`。
+
+<table>
+  <tr>
+    <td align="center"><img src="chapter07_llm_control/lab_7_llm_control/portfolio/agent_L3_sequence.gif" width="380" alt="Lab 7 L3 Sequence"/><br/><sub>L3 多步顺序：前进 1 m 后右转 90°（最终 yaw = -1.578 rad）</sub></td>
+    <td align="center"><img src="chapter07_llm_control/lab_7_llm_control/portfolio/agent_L4_react.gif" width="380" alt="Lab 7 L4 ReAct"/><br/><sub>L4 ReAct 闭环导航：抵达 (2.041, 1.071)</sub></td>
+  </tr>
+</table>
+
+- **拓展消融实验：压力测试 `"最快速度转两圈，然后飞奔向前4m"` 的三段式改进**（在保持 4 个官方工具与 7/7 测试全部通过的前提下，不换模型、不重训 RL，仅迭代中层遥测与控制闭环）：
+
+| 阶段 | 核心改动 | 旋转阶段实测 | 高速直跑（`vx=1.5`）净偏航漂移 | 核心结论与边界 |
+| --- | --- | --- | --- | --- |
+| **Stage 1 (`before`)** | 原始 4 工具（仅返折叠 `yaw ∈ [-π, π]`） | ~3 圈（5 步，日志出现 `2π*?` 盲猜，起跑偏 `-15.5°`） | 6 s 左偏 **`+0.592 rad`（33.9°）** | 角度折叠混叠导致圈数丢失；终位 `y=-0.058` 实为起跑右偏与底层左偏巧合抵消 |
+| **Stage 2 (`after`)** | + 无折叠角度/位移遥测（`delta_turns / total_turns / delta_dist_m`） | **2.000 圈**（2 步，起跑仅偏 `-0.5°`，总调用 8→4） | 6 s 左偏 **`+0.594 rad`（34.0°）** | 彻底根治角度盲区；暴露 `test_policy.json` 高速开环系统性左偏（`~+0.10 rad/s`） |
+| **Stage 3 (`v3`)** | + 中层 **PI 航向保持外环（带抗积分饱和）** + 旋转后回正纪律 | 首步同样给 10 s 冲至 `2.242 圈`，凭无折叠遥测立即反向回正至 `yaw = +0.011 rad`（`0.6°`） | **10 s 狂奔 7.07 m 仅偏 `-0.009 rad`（0.5°）**，横向仅偏 `8.8 cm`（漂移降幅 **>98%**） | 先测纯 P（`kp=2.0`）留 `+0.145 rad` 静差，加 I 后几乎零偏；但 LLM 误估 `duration=10` 冲过头到 `7.02 m` 后自主倒车回到 `x=4.072 m`，印证开环时间参数 `duration` 的天然上限 |
+
+<table>
+  <tr>
+    <td align="center"><img src="chapter07_llm_control/lab_7_llm_control/portfolio/exp_spin_sprint_before.gif" width="255" alt="Stage 1 Before"/><br/><sub>Stage 1：原始基线（角度折叠，多转 1 圈）</sub></td>
+    <td align="center"><img src="chapter07_llm_control/lab_7_llm_control/portfolio/exp_spin_sprint_after.gif" width="255" alt="Stage 2 After"/><br/><sub>Stage 2：+无折叠遥测（精准 2.00 圈，暴露高速左偏）</sub></td>
+    <td align="center"><img src="chapter07_llm_control/lab_7_llm_control/portfolio/exp_spin_sprint_v3.gif" width="255" alt="Stage 3 V3"/><br/><sub>Stage 3：+PI 航向保持（7 m 狂奔仅偏 0.5°）</sub></td>
+  </tr>
+</table>
+
+- **实验边界**：本章底层策略复用上游 `test_policy.json`（待第 6 章 Lab 6 150M 步自训权重完成后可无缝替换对比）；§7.7.2 Whisper 语音控制作为选做扩展暂未接入。
+
+---
+
 ## 目录结构
 
 ```text
@@ -122,11 +159,15 @@ quadruped-learning/
 │   ├── 4.quadruped-mjcf/
 │   └── assets/mjcfs/              # 公共整机 MJCF 与 13 个 STL 网格（第 5/6 章复用）
 ├── chapter05_gait_control/        # 第 5 章：真实 Pupper 开环步态控制 demo
-└── chapter06_policy_training/     # 第 6 章：正文 PPO 与正式 Lab 6
-    ├── configs/                   # 正文训练 YAML 配置
-    ├── lab6/                      # 正式 Lab 6（学生编辑 lab_6_rl_pupper/envs/pupper_env.py）
-    ├── outputs/                   # (gitignored) 本机训练 checkpoint、评估动画与日志
-    └── reports/                   # (gitignored) 上游作者 20M 步对照报告（仅本地保留）
+├── chapter06_policy_training/     # 第 6 章：正文 PPO 与正式 Lab 6
+│   ├── configs/                   # 正文训练 YAML 配置
+│   ├── lab6/                      # 正式 Lab 6（学生编辑 lab_6_rl_pupper/envs/pupper_env.py）
+│   ├── outputs/                   # (gitignored) 本机训练 checkpoint、评估动画与日志
+│   └── reports/                   # (gitignored) 上游作者 20M 步对照报告（仅本地保留）
+└── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7 与三段式消融实验
+    ├── START_HERE.md              # 本机环境与复用资产说明
+    └── lab_7_llm_control/         # dispatch / run_agent / render_task_gif / 实时 3D REPL
+        └── portfolio/             # L1–L5 展柜 GIF、agent_traces.md、三段式对照实验与 notes.md
 ```
 
 ---
@@ -138,7 +179,7 @@ quadruped-learning/
 | 适用章节 | 解释器路径 | 主要依赖 |
 | --- | --- | --- |
 | **第 1–5 章** | `D:\Miniconda3\envs\mujoco\python.exe` | MuJoCo、NumPy、Matplotlib、Pillow |
-| **第 6 章 & Lab 6** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu |
+| **第 6–7 章 & Lab 6–7** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu、openai、python-dotenv |
 
 ```powershell
 # 运行第 5 章步态演示（示例：原地 trot）
@@ -150,4 +191,11 @@ Set-Location D:\learn\quadruped-learning\chapter06_policy_training
 
 # 运行正式 Lab 6 四项数值断言测试
 & .\.venv\Scripts\python.exe -X utf8 .\lab6\lab_6_rl_pupper\tests.py
+
+# 运行正式 Lab 7 七项离线数值断言测试（无需 API Key）
+Set-Location D:\learn\quadruped-learning\chapter07_llm_control
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\tests.py
+
+# 启动第 7 章实时 3D 交互式文本 REPL（需在 lab_7_llm_control/.env 配置 API Key）
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\repl.py
 ```

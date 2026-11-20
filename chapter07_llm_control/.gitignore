@@ -1,0 +1,8 @@
+# API keys (NEVER commit .env!)
+.env
+*.env.local
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
