@@ -1,6 +1,6 @@
 # Quadruped Learning — 从零到一搭建四足机器人
 
-个人学习与实践仓库，基于 Datawhale 开源教程 [《从零到一搭建四足机器人》](https://datawhalechina.github.io/dive-into-embodied-ai/docs/practices/quadruped/cs123/)（Stanford CS123 Pupper v3 体系），在 **Windows + MuJoCo** 环境下从单关节 PD 控制一路做到四足强化学习步态策略训练与大语言模型具身控制。
+个人学习与实践仓库，基于 Datawhale 开源教程 [《从零到一搭建四足机器人》](https://datawhalechina.github.io/dive-into-embodied-ai/docs/practices/quadruped/cs123/)（Stanford CS123 Pupper v3 体系），在 **Windows + MuJoCo** 环境下从单关节 PD 控制一路做到四足强化学习步态、大语言模型具身控制、视觉感知追球与多模态 VLM/语音闭环。
 
 > **写作原则**：本仓库只记录实际跑通并核对过的结果，对实验边界（例如开环步态依赖机身 weld、524k 步基础 PPO 尚不能稳定跟踪速度）如实标注。
 
@@ -17,6 +17,7 @@
 | **第 5 章** | 步态控制 | 开环 walk / trot / pace / bound / gallop | — | ✅ 已完成 | 真实 Pupper 数值 IK + 步态时钟演示 |
 | **第 6 章** | 强化学习策略训练（PPO） | 45 维 20M 步 CPU PPO（18M 峰值实测 3 档跟速 0 跌倒） | `lab_6_rl_pupper` | ✅ 已完成 | 18M 走路演示 GIF、速度跟踪曲线、Lab 6 540 维环境/4 项测试/150M 对照与反思 |
 | **第 7 章** | 语言控制与具身 Agent | 工具 API、OpenAI SDK 原生 ReAct 循环、实时 3D 文本/语音 REPL | `lab_7_llm_control` | ✅ 已完成 | L1–L5 任务展柜 GIF、`agent_traces.md`、三段式航向保持消融、`faster-whisper` 语音控制 |
+| **第 8 章** | 视觉感知与多模态闭环 | 头部相机离屏渲染、HSV 检测、视觉伺服 P 控 + 三态 FSM、§8.8 VLM/语音视觉 Agent | `lab_8_ball_chase` | ✅ 已完成 | 20 s 追球毕业 GIF、误差与测距分析图、7/7 断言、V1/V2 视觉与 Gemini VLM 闭环 GIF |
 
 ---
 
@@ -159,6 +160,41 @@
 
 ---
 
+### 第 8 章 · 视觉感知、追球毕业汇演与多模态 Agent（Lab 8）
+
+- **标准 Lab 8（`lab_8_ball_chase`）实现与验收**：
+  - 手写完成全部 3 个核心 TODO：OpenCV 红色跨 0° 双区间 HSV 检测（`perception/ball_detector.py`）、视觉伺服 P 控制器与三态追踪状态机 `TrackerFSM`（`perception/tracker_fsm.py`）、以及 **10 Hz 视觉 / 50 Hz RL 策略 / 500 Hz MuJoCo 物理** 三层频率追球主循环（`starter.py`），通过全部 **7 条官方离线数值断言**（`tests.py`）。
+  - **20 秒追球实测观察**（完整交付物见 `chapter08_perception/lab_8_ball_chase/portfolio/`）：
+    - **丢球 → 搜索 → 找回**：`tracking_error.png` 记录到 `t ≈ 6.3 s` 丢球后前 2 s 保持 `TRACKING` 减速惯性跟，超过 `LOST_TIMEOUT = 2.0 s` 后在 `t ≈ 8.3 s` 切入 `SEARCHING` 原地慢转，并于 `t ≈ 9.2 s` 重新抓回红球。
+    - **纯 P 控稳态静差**：稳定跟随阶段 `e_yaw` 维持在 `+0.18 ~ +0.20`，与第 7 章发现的 `test_policy.json` 前进系统性左偏相互印证。
+    - **小孔成像与分辨率边界**：`detection_vs_distance.png` 呈现清晰反比例曲线 $h \propto 1/d$；靠近至 `~0.85 m` 时 `box_h` 达 `30–33 px`（`≥ H_REF`）自动停步，远至 `~2.4 m` 时跌至 `9–10 px` 逼近 `_MIN_AREA = 50` 下限。
+
+<table>
+  <tr>
+    <td align="center"><img src="chapter08_perception/lab_8_ball_chase/portfolio/ball_chase.gif" width="255" alt="Lab 8 Ball Chase GIF"/><br/><sub>20 s 追红球毕业汇演（10 Hz 视觉 / 50 Hz RL / 500 Hz 物理）</sub></td>
+    <td align="center"><img src="chapter08_perception/lab_8_ball_chase/portfolio/tracking_error.png" width="255" alt="Lab 8 Tracking Error"/><br/><sub>e_yaw 追踪误差与 FSM 状态切换（含 t≈8.3s 丢球→找回）</sub></td>
+    <td align="center"><img src="chapter08_perception/lab_8_ball_chase/portfolio/detection_vs_distance.png" width="255" alt="Lab 8 Detection vs Distance"/><br/><sub>小孔成像 bbox 高度 vs 球距离（0.85 m 触及 H_REF=30 px）</sub></td>
+  </tr>
+</table>
+
+- **§8.8 选做加餐：视觉工具 + Gemini VLM + 实时 3D 语音闭环（`vision_tools.py` / `vision_agent.py`）**：
+  - 将经典快眼 `look_for` / `follow` 与按需多模态看图工具 `ask_vlm`（内存 PNG base64 → Google AI Studio OpenAI 兼容端点 `gemini-2.5-flash`）接入第 7 章 `deepseek-chat` 工具循环，并打通实时 3D MuJoCo 窗口与 `faster-whisper` 麦克风语音交互。
+  - **两项关键排障与实测迭代**（完整轨迹见 `chapter08_perception/lab_8_ball_chase/portfolio/vision_agent_traces.md`）：
+    1. **跨越低速步态死区**：首测发现 `1.6 m` 处 `visual_servo` 输出 `vx ≈ 0.19 m/s` 落入 `test_policy.json` 低速死区（原地踏步，DeepSeek 曾自主改用 `walk(vx=0.5)` 救场）；在 `follow()` 中加入最小有效推进 `max(current_vx, 0.35)` 后，视野外找球任务 `V1`（球藏于 `[0.6, -1.2, 0.05]`）5 次 `60°` 扫视发现红球，单次 `follow('red', 8)` 即 `reached=True` 一步停在球前（终位 `[0.238, -0.431, -1.162]`）。
+    2. **VLM 思考 Token 预算**：`gemini-2.5-flash` 默认消耗 thinking tokens，`max_tokens=256` 会截断正文；调高至 `max_tokens=1024` 后，任务 `V2` 中 VLM 完整识别出蓝白格子地、红球位于画面左侧与阴影光源方向，随后 `look_for` 复核 `e_yaw = -0.497`，视觉跟随最终稳停于球前 `0.88 m` 正中（`e_yaw ≈ -0.02`，`box_h = 29 px`）。
+    3. **实时 3D 语音实测**：麦克风口述找球指令经本地 `faster-whisper` 转写后，驱动实时 3D Pupper 自主转身找球并抵达红球前停下。
+
+<table>
+  <tr>
+    <td align="center"><img src="chapter08_perception/lab_8_ball_chase/portfolio/vision_agent_V1_search_and_follow.gif" width="380" alt="Lab 8 V1 Search and Follow"/><br/><sub>§8.8 V1：球藏右后方 → DeepSeek 自主转身找球并 follow 一次到位</sub></td>
+    <td align="center"><img src="chapter08_perception/lab_8_ball_chase/portfolio/vision_agent_V2_vlm_then_follow.gif" width="380" alt="Lab 8 V2 VLM Then Follow"/><br/><sub>§8.8 V2：Gemini 2.5 Flash 看图判断方位 → 视觉伺服靠近停稳</sub></td>
+  </tr>
+</table>
+
+- **实验边界**：仿真采用针孔相机（`fovy=60°`）与鲜红 `mocap` 球，跳过真机鱼眼去畸变；底层步态继续复用上游 `test_policy.json`。
+
+---
+
 ## 目录结构
 
 ```text
@@ -182,10 +218,14 @@ quadruped-learning/
 │   │   └── lab_6_rl_pupper/portfolio/  # Lab 6 权重、对比 GIF、训练曲线与反思 notes.md
 │   ├── outputs/                   # (gitignored) 本机训练 checkpoint、评估动画与日志
 │   └── reports/                   # (gitignored) 上游作者 20M 步对照报告（仅本地保留）
-└── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7、三段式消融与语音控制
+├── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7、三段式消融与语音控制
+│   ├── START_HERE.md              # 本机环境与复用资产说明
+│   └── lab_7_llm_control/         # dispatch / run_agent / render_task_gif / 实时 3D 文本与语音 REPL
+│       └── portfolio/             # L1–L5 展柜 GIF、agent_traces.md、三段式对照实验与 notes.md
+└── chapter08_perception/          # 第 8 章：视觉感知、正式 Lab 8 追红球与 §8.8 多模态 VLM/语音闭环
     ├── START_HERE.md              # 本机环境与复用资产说明
-    └── lab_7_llm_control/         # dispatch / run_agent / render_task_gif / 实时 3D 文本与语音 REPL
-        └── portfolio/             # L1–L5 展柜 GIF、agent_traces.md、三段式对照实验与 notes.md
+    └── lab_8_ball_chase/          # HSV 检测、visual_servo + TrackerFSM、run_chase、vision_tools & vision_agent
+        └── portfolio/             # ball_chase.gif、误差/测距图、V1/V2 多模态 GIF、轨迹与 notes.md
 ```
 
 ---
@@ -197,7 +237,7 @@ quadruped-learning/
 | 适用章节 | 解释器路径 | 主要依赖 |
 | --- | --- | --- |
 | **第 1–5 章** | `D:\Miniconda3\envs\mujoco\python.exe` | MuJoCo、NumPy、Matplotlib、Pillow |
-| **第 6–7 章 & Lab 6–7** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu、openai、python-dotenv、faster-whisper、sounddevice |
+| **第 6–8 章 & Lab 6–8** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu、openai、python-dotenv、faster-whisper、sounddevice、opencv-python 5.1.0 |
 
 ```powershell
 # 运行第 5 章步态演示（示例：原地 trot）
@@ -217,4 +257,14 @@ Set-Location D:\learn\quadruped-learning\chapter07_llm_control
 # 启动第 7 章实时 3D 交互式文本 / 语音 REPL（需在 lab_7_llm_control/.env 配置 API Key）
 & ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\repl.py
 & ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\voice_repl.py
+
+# 运行正式 Lab 8 七项离线数值断言与毕业交付物生成（纯 CPU、无需 API Key）
+Set-Location D:\learn\quadruped-learning\chapter08_perception
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_8_ball_chase\tests.py
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_8_ball_chase\make_artifacts.py
+
+# 运行第 8 章 §8.8 视觉工具 + Gemini VLM 闭环演示与实时 3D 文本/语音交互（需配置 .env）
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_8_ball_chase\vision_agent.py
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_8_ball_chase\vision_agent.py --repl
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_8_ball_chase\vision_agent.py --voice
 ```
