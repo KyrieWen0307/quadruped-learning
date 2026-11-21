@@ -16,7 +16,7 @@
 | **第 4 章** | 搭建四足机器人（MJCF） | 固定/浮动基座站立、三形态对照 | — | ✅ 已完成 | `pupper_v3.xml` + 13 个 STL、站高曲线、增益热图 |
 | **第 5 章** | 步态控制 | 开环 walk / trot / pace / bound / gallop | — | ✅ 已完成 | 真实 Pupper 数值 IK + 步态时钟演示 |
 | **第 6 章** | 强化学习策略训练（PPO） | 45 维 20M 步 CPU PPO（18M 峰值实测 3 档跟速 0 跌倒） | `lab_6_rl_pupper` | ✅ 已完成 | 18M 走路演示 GIF、速度跟踪曲线、Lab 6 540 维环境/4 项测试/150M 对照与反思 |
-| **第 7 章** | 语言控制与具身 Agent | 工具 API、OpenAI SDK 原生 ReAct 循环、实时 3D REPL | `lab_7_llm_control` | ✅ 已完成 | L1–L5 任务展柜 GIF、`agent_traces.md`、三段式工具契约与 PI 航向保持消融实验 |
+| **第 7 章** | 语言控制与具身 Agent | 工具 API、OpenAI SDK 原生 ReAct 循环、实时 3D 文本/语音 REPL | `lab_7_llm_control` | ✅ 已完成 | L1–L5 任务展柜 GIF、`agent_traces.md`、三段式航向保持消融、`faster-whisper` 语音控制 |
 
 ---
 
@@ -152,7 +152,10 @@
   </tr>
 </table>
 
-- **实验边界**：本章底层策略复用上游 `test_policy.json`（待第 6 章 Lab 6 150M 步自训权重完成后可无缝替换对比）；§7.7.2 Whisper 语音控制作为选做扩展暂未接入。
+- **§7.7.2 语音控制拓展实测（`voice_repl.py`）**：接入 `faster-whisper`（`small`, CPU `int8` + VAD 静音过滤，免 `ffmpeg`）与 `sounddevice`，本机 CPU 单句识别稳定在 **`~1.5 s`**，实现“麦克风说话 → 本地 ASR → DeepSeek 规划 → 中层 PI 航向保持 → 50 Hz RL 步态 → 实时 3D MuJoCo”五层语音闭环：
+  - 语音指令 `"转两圈,然后往前飞奔四米。"`（识别 `1467 ms`）：精准转 2.000 圈（起跑 `yaw = -0.003 rad`，`0.17°`），全速 `1.5 m/s` 笔直奔跑 `4.2 m` 至 `[6.212, 0.018, 0.045]`（横向仅偏 `1.8 cm`，一次到位无超调）。
+  - 语音容错实测：口述“后**退**到原点”时 Whisper 误识别为同音错字 **`'后推到原点。'`**（`1545 ms`），DeepSeek 凭上下文自动纠错并调用 `get_pose`，经 `-1.5 → -1.2 → -0.8 → -0.4 m/s` 分级减速倒车 `6.2 m`，最终停在 **`[0.008, -0.027, -0.005]`**（距原点 `x` 仅 `8 mm`，`12 m` 往返全程 `total_turns = 1.997`）。
+- **实验边界**：本章底层策略复用上游 `test_policy.json`（与第 6 章 Lab 6 540 维 50 Hz/500 Hz 接口一致）。
 
 ---
 
@@ -179,9 +182,9 @@ quadruped-learning/
 │   │   └── lab_6_rl_pupper/portfolio/  # Lab 6 权重、对比 GIF、训练曲线与反思 notes.md
 │   ├── outputs/                   # (gitignored) 本机训练 checkpoint、评估动画与日志
 │   └── reports/                   # (gitignored) 上游作者 20M 步对照报告（仅本地保留）
-└── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7 与三段式消融实验
+└── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7、三段式消融与语音控制
     ├── START_HERE.md              # 本机环境与复用资产说明
-    └── lab_7_llm_control/         # dispatch / run_agent / render_task_gif / 实时 3D REPL
+    └── lab_7_llm_control/         # dispatch / run_agent / render_task_gif / 实时 3D 文本与语音 REPL
         └── portfolio/             # L1–L5 展柜 GIF、agent_traces.md、三段式对照实验与 notes.md
 ```
 
@@ -194,7 +197,7 @@ quadruped-learning/
 | 适用章节 | 解释器路径 | 主要依赖 |
 | --- | --- | --- |
 | **第 1–5 章** | `D:\Miniconda3\envs\mujoco\python.exe` | MuJoCo、NumPy、Matplotlib、Pillow |
-| **第 6–7 章 & Lab 6–7** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu、openai、python-dotenv |
+| **第 6–7 章 & Lab 6–7** | `D:\learn\quadruped-learning\chapter06_policy_training\.venv\Scripts\python.exe` | Python 3.12.16、MuJoCo 3.7.0、Gymnasium 1.2.2、SB3 2.9.2、PyTorch 2.9.1+cpu、openai、python-dotenv、faster-whisper、sounddevice |
 
 ```powershell
 # 运行第 5 章步态演示（示例：原地 trot）
@@ -211,6 +214,7 @@ Set-Location D:\learn\quadruped-learning\chapter06_policy_training
 Set-Location D:\learn\quadruped-learning\chapter07_llm_control
 & ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\tests.py
 
-# 启动第 7 章实时 3D 交互式文本 REPL（需在 lab_7_llm_control/.env 配置 API Key）
+# 启动第 7 章实时 3D 交互式文本 / 语音 REPL（需在 lab_7_llm_control/.env 配置 API Key）
 & ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\repl.py
+& ..\chapter06_policy_training\.venv\Scripts\python.exe -X utf8 .\lab_7_llm_control\voice_repl.py
 ```
