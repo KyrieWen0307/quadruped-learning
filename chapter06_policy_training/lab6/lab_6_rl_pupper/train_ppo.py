@@ -37,11 +37,13 @@ def main() -> None:
                         help="SubprocVecEnv 并行 env 数；CPU 上 16 是个 sweet spot")
     parser.add_argument("--warm-start", type=str, default=None,
                         help="path to checkpoint to warm-start from")
+    parser.add_argument("--curriculum", action="store_true",
+                        help="Stage-1 课程奖励（去躺平费 + 强化速度跟踪），用于 CPU 破局站立局部最优")
     args = parser.parse_args()
 
     print(
         f"开始训练: seed={args.seed}, total_steps={args.total_steps:,}, "
-        f"n_envs={args.n_envs}, warm_start={args.warm_start}"
+        f"n_envs={args.n_envs}, warm_start={args.warm_start}, curriculum={args.curriculum}"
     )
     t0 = time.time()
     path = train_ppo(
@@ -49,6 +51,7 @@ def main() -> None:
         total_timesteps=args.total_steps,
         n_envs=args.n_envs,
         warm_start=args.warm_start,
+        curriculum=args.curriculum,
     )
     wall = time.time() - t0
     size_mb = path.stat().st_size / (1024 * 1024)

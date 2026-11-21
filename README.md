@@ -15,7 +15,7 @@
 | **第 3 章** | 逆运动学（IK）与轨迹 | 解析 IK、数值 IK、雅可比与 DLS | `lab_3_stepping` | ✅ 已完成 | 悬空踏步 GIF、步长扫描 GIF、轨迹对比图 |
 | **第 4 章** | 搭建四足机器人（MJCF） | 固定/浮动基座站立、三形态对照 | — | ✅ 已完成 | `pupper_v3.xml` + 13 个 STL、站高曲线、增益热图 |
 | **第 5 章** | 步态控制 | 开环 walk / trot / pace / bound / gallop | — | ✅ 已完成 | 真实 Pupper 数值 IK + 步态时钟演示 |
-| **第 6 章** | 强化学习策略训练（PPO） | 基础 45 维 PPO（524k 步 CPU 训练与评估） | `lab_6_rl_pupper` | 🚧 进行中 | Lab 6 已完成 TODO 2（540 维观测），待完成 TODO 1（18 项奖励）与 TODO 3（命令采样） |
+| **第 6 章** | 强化学习策略训练（PPO） | 45 维 20M 步 CPU PPO（18M 峰值实测 3 档跟速 0 跌倒） | `lab_6_rl_pupper` | ✅ 已完成 | 18M 走路演示 GIF、速度跟踪曲线、Lab 6 540 维环境/4 项测试/150M 对照与反思 |
 | **第 7 章** | 语言控制与具身 Agent | 工具 API、OpenAI SDK 原生 ReAct 循环、实时 3D REPL | `lab_7_llm_control` | ✅ 已完成 | L1–L5 任务展柜 GIF、`agent_traces.md`、三段式工具契约与 PI 航向保持消融实验 |
 
 ---
@@ -87,23 +87,36 @@
 
 ---
 
-### 第 6 章 · 强化学习步态策略训练（进行中）
+### 第 6 章 · 强化学习步态策略训练（Lab 6）
 
-#### 1. 正文基础版 PPO（已完成首轮 CPU 实测）
-- **配置与训练**：45 维观测、12 维位置残差动作、50 Hz 控制 / 250 Hz 物理。本机 CPU（8 并行环境、`seed=0`）从零训练 **524,288 步**，耗时 **162.32 s**。
-- **训练趋势**：平均回合长度由 **218 步**提升至 **576 步**，平均回合回报由 **1.87** 升至 **8.18**。
-- **独立评估（`seed=42`，确定性策略）**：
-  - 12 秒多段指令切换测试中 **0 次跌倒**，机身稳定站立；
-  - 给定前向速度指令 `0.2 / 0.4 / 0.6 m/s` 时，实测平均前向速度为 `0.0051 / 0.0060 / 0.0070 m/s`；指令 `0.5 m/s` 段实测 `0.0169 m/s`。
-  - **结论**：524k 步已学会“站稳不摔”，但距离稳定迈步和速度跟踪还需要显著更多训练步数（对应正式 Lab 6）。
+#### 1. 正文 45 维精简版 PPO（20M 步本机 CPU 实测跑通）
+- **配置与训练**：45 维观测、7 项奖励、12 维位置残差动作、`net_arch=[256, 256]`、50 Hz 控制 / 250 Hz 物理。本机 CPU（16 并行环境、`seed=0`）训练 **20,021,248 步**（约 2 小时），平均回合长度由 `253.8` 提升至 `762.1`（峰值 `853.1`），平均回合回报由 `2.50` 升至 `22.89`（峰值 **`25.80` @ 18.4M**）。
+- **独立评估（18M 峰值 checkpoint，`seed=42`，确定性策略，去掉首秒热身）**：
+  - `vx_cmd = 0.2 / 0.4 / 0.6 m/s` 实测平均前向速度为 **`0.2641 / 0.5180 / 0.5211 m/s`**（三档平均 MAE **`0.0870 m/s`**，全程 **0 次跌倒**），可稳定执行站立、前进、转向与后退变速指令。
 
-#### 2. 正式 Lab 6（`lab_6_rl_pupper`，进行中）
-- 入口文件：`chapter06_policy_training/lab6/lab_6_rl_pupper/envs/pupper_env.py`（与 MJX/Brax 配方对齐：540 维 15 帧堆叠观测、12 维动作、18 项奖励）。
-- 当前进度：
-  - [x] **TODO 2 `_get_obs()`**：36 维单帧 + 观测噪声 + IMU 延迟 + 15 帧历史堆叠，已通过单项检查
-  - [ ] **TODO 1 `_compute_reward()`**：18 项加权奖励
-  - [ ] **TODO 3 `_sample_command()`**：宽范围速度指令采样与近零分支
-  - [ ] 全部 4 项官方测试 (`tests.py`)、端到端 PPO 训练、变速评估与 `portfolio/` 交付物
+<table>
+  <tr>
+    <td align="center"><img src="chapter06_policy_training/portfolio/walk_18m_demo.gif" width="380" alt="Chapter 6 18M Walk Demo"/><br/><sub>45 维 18M 步 CPU PPO 变速走路演示</sub></td>
+    <td align="center"><img src="chapter06_policy_training/portfolio/walk_18m_velocity_tracking.webp" width="380" alt="Chapter 6 18M Velocity Tracking"/><br/><sub>0.2 / 0.4 / 0.6 m/s 三档速度跟踪曲线（MAE 0.087 m/s，0 跌倒）</sub></td>
+  </tr>
+</table>
+
+#### 2. 正式 Lab 6（`lab_6_rl_pupper`，540 维 18 项配方与消融诊断）
+- **代码实现与测试**：在 `chapter06_policy_training/lab6/lab_6_rl_pupper/envs/pupper_env.py` 完成全部 3 个手写 TODO，并通过全部 4 项官方数值断言测试（`tests.py`）：
+  - [x] **TODO 1 `_compute_reward()`**：18 项加权奖励（跟踪 3 + 机身稳定 3 + 能耗平滑 4 + 步态静止 4 + 终止碰撞 4）+ `× dt` + `[0, 10000]` 截断
+  - [x] **TODO 2 `_get_obs()`**：36 维单帧 + 观测噪声 + IMU 延迟 + 15 帧最新置顶堆叠（540 维）
+  - [x] **TODO 3 `_sample_command()`**：宽范围速度指令（`vx ±0.75 / vy ±0.5 / wz ±2.0`）与 1% `±0.1` 近零分支
+- **实测对照与实验边界**（完整交付物见 `chapter06_policy_training/lab6/lab_6_rl_pupper/portfolio/`，含 `pupper_ppo.zip`、`rl_pupper_commands.gif`、`comparison.gif`、`reward_curve.png`、`velocity_tracking.png`、`notes.md`）：
+  - **原版超参 150M 步本机 CPU 训练（约 21.3 小时）**：`ep_len_mean` 由 `31` 升至 **`980 / 1000`**，`ep_rew_mean` 达 **`28.7`**（110M 峰值 **`31.98`**），膝盖/机身碰撞归零；但实测发现 SB3 默认无界高斯配合 `ent_coef=0.01` 与环境外层 `action.clip(-1, 1)` 会在长训下触发“刷熵饱和”——`std` 膨胀至 **`214`**，10/12 个关节均值被推至 `±1` 饱和锁死，策略落入原地站立局部最优（三档速度跟踪停留在 `0.00 m/s`）。
+  - **修复消融（不改 `pupper_env.py`，仅调整 `starter.py`）**：将 `ent_coef` 归零、网络扩容至 `[256, 256]` 并设 `log_std_init=-0.7` 后，8M 步即达到 `ep_len=903`、`ep_rew=26.7`、直腿 0 跌倒站立且彻底消除 `std` 爆炸；进一步引入 `--curriculum` 阶段热启（去 `tracking_orientation` 静态保底奖 + 强化线速度跟踪 + `target_kl=0.02` + `LogStdClampCallback`）后，`r_tracking_lin_vel_mean` 首次由 `0.63` 突破至 `1.00`、`r_feet_air_time_mean` 转正。
+  - **硬件边界说明**：在 Colab GPU 实测 `train_brax_ppo.py`（MJX）时，确认 `cuda13` 插件在 Driver 580 A100 上触发核函数挂起，切换 `--backend cuda12` 后在 L4 上可正常运行，但因 `pupper_v3_floating.xml` 采用高精度椭圆摩擦锥（`cone="elliptic" impratio="100"`），L4 显存带宽下稳态仅 `~2,427 steps/s`（低于本机 20 核 CPU）；完整 540 维 18 项配方的大规模并行收敛需高带宽 GPU（A100 `cuda12` 等）支持。
+
+<table>
+  <tr>
+    <td align="center"><img src="chapter06_policy_training/lab6/lab_6_rl_pupper/portfolio/reward_curve.png" width="380" alt="Lab 6 150M Reward Curve"/><br/><sub>Lab 6 150M 步训练曲线（ep_rew 达 28.7，峰值 31.98）</sub></td>
+    <td align="center"><img src="chapter06_policy_training/lab6/lab_6_rl_pupper/portfolio/comparison.gif" width="380" alt="Lab 6 Comparison GIF"/><br/><sub>Lab 6 左右对照（左：本机 SB3 vs 右：上游 test_policy.json）</sub></td>
+  </tr>
+</table>
 
 ---
 
@@ -159,9 +172,11 @@ quadruped-learning/
 │   ├── 4.quadruped-mjcf/
 │   └── assets/mjcfs/              # 公共整机 MJCF 与 13 个 STL 网格（第 5/6 章复用）
 ├── chapter05_gait_control/        # 第 5 章：真实 Pupper 开环步态控制 demo
-├── chapter06_policy_training/     # 第 6 章：正文 PPO 与正式 Lab 6
+├── chapter06_policy_training/     # 第 6 章：正文 45 维 PPO 与正式 Lab 6
 │   ├── configs/                   # 正文训练 YAML 配置
+│   ├── portfolio/                 # 正文 45 维 18M 步走路演示 GIF 与三档速度跟踪曲线
 │   ├── lab6/                      # 正式 Lab 6（学生编辑 lab_6_rl_pupper/envs/pupper_env.py）
+│   │   └── lab_6_rl_pupper/portfolio/  # Lab 6 权重、对比 GIF、训练曲线与反思 notes.md
 │   ├── outputs/                   # (gitignored) 本机训练 checkpoint、评估动画与日志
 │   └── reports/                   # (gitignored) 上游作者 20M 步对照报告（仅本地保留）
 └── chapter07_llm_control/         # 第 7 章：LLM 语言控制、正式 Lab 7 与三段式消融实验

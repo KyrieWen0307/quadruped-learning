@@ -66,11 +66,63 @@ CMD_LABELS = {
 # 训练
 # ---------------------------------------------------------------------------
 
+CURRICULUM_REWARD_WEIGHTS = {
+    "tracking_lin_vel": 4.0,
+    "tracking_ang_vel": 1.5,
+    "tracking_orientation": 0.0,
+    "lin_vel_z": -0.5,
+    "ang_vel_xy": -0.02,
+    "orientation": -2.5,
+    "torques": -2e-4,
+    "joint_acceleration": -1e-7,
+    "mechanical_work": 0.0,
+    "action_rate": -0.005,
+    "feet_air_time": 0.6,
+    "stand_still": -0.5,
+    "stand_still_joint_velocity": -0.1,
+    "abduction_angle": -0.1,
+    "termination": -100.0,
+    "foot_slip": -0.02,
+    "knee_collision": -1.0,
+    "body_collision": -1.0,
+}
+
+
+import gymnasium as gym
+
+
+class CurriculumRewardWrapper(gym.Wrapper):
+    """Stage-1 课程学习奖励包装器：铲平“原地不动拿 30 分”局部最优，不改 pupper_env.py。"""
+
+    def step(self, action):
+        obs, _orig_reward, terminated, truncated, info = self.env.step(action)
+        total_rate = 0.0
+        for k, cur_w in CURRICULUM_REWARD_WEIGHTS.items():
+            orig_w = REWARD_WEIGHTS[k]
+            if orig_w != 0.0 and f"r_{k}" in info:
+                raw_term = info[f"r_{k}"] / orig_w
+                total_rate += cur_w * raw_term
+
+        base_env = self.env.unwrapped
+        pupper = getattr(base_env, "inner", base_env)
+        R = pupper.data.xmat[pupper._base_id].reshape(3, 3)
+        local_vel = R.T @ pupper.data.qvel[0:3]
+        cmd_xy = pupper.cmd[:2]
+        cmd_speed = float(np.linalg.norm(cmd_xy))
+        if cmd_speed > 0.05:
+            progress = float(np.dot(local_vel[:2], cmd_xy) / cmd_speed)
+            total_rate += 2.0 * float(np.clip(progress, -0.5, cmd_speed))
+
+        reward = float(np.clip(total_rate * pupper.dt, 0.0, 10000.0))
+        return obs, reward, terminated, truncated, info
+
+
 def train_ppo(
     seed: int = 0,
     total_timesteps: int = 150_000_000,
     n_envs: int = 16,
     warm_start: Path | None = None,
+    curriculum: bool = False,
 ) -> Path:
     """SB3 PPO 训练入口，超参与 brax-PPO 配方等价换算：
     - lr=3e-4, ent_coef=0.01, gamma=0.97, gae_lambda=0.95, clip_range=0.2（直接对应）
@@ -82,12 +134,27 @@ def train_ppo(
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import SubprocVecEnv
     from stable_baselines3.common.monitor import Monitor
-    from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
+    from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, CallbackList
     from callbacks import RewardComponentCallback
+
+    class LogStdClampCallback(BaseCallback):
+        def __init__(self, min_log_std: float = -1.8, max_log_std: float = -0.3):
+            super().__init__()
+            self.min_log_std = min_log_std
+            self.max_log_std = max_log_std
+
+        def _on_step(self) -> bool:
+            return True
+
+        def _on_rollout_start(self) -> None:
+            if hasattr(self.model.policy, "log_std"):
+                self.model.policy.log_std.data.clamp_(self.min_log_std, self.max_log_std)
 
     def make_env(rank: int):
         def _thunk():
             env = FrameStackedPupperEnv(n_stack=N_STACK)
+            if curriculum:
+                env = CurriculumRewardWrapper(env)
             env = Monitor(env)
             env.reset(seed=seed + rank)
             return env
@@ -98,30 +165,49 @@ def train_ppo(
     vec_env = SubprocVecEnv([make_env(i) for i in range(n_envs)])
     PORTFOLIO_DIR.mkdir(parents=True, exist_ok=True)
 
+    ckpt_step_interval = 1_000_000 if curriculum else 2_000_000
     checkpoint_cb = CheckpointCallback(
-        save_freq=max(5_000_000 // n_envs, 1),
+        save_freq=max(ckpt_step_interval // n_envs, 1),
         save_path=str(PORTFOLIO_DIR),
-        name_prefix=CHECKPOINT_NAME,
+        name_prefix=f"{CHECKPOINT_NAME}_cur" if curriculum else CHECKPOINT_NAME,
     )
     reward_cb = RewardComponentCallback()
-    callbacks_list = [checkpoint_cb, reward_cb]
+    callbacks_list = [checkpoint_cb, reward_cb, LogStdClampCallback()]
 
     if warm_start is not None:
-        print(f"warm-starting from {warm_start}")
+        print(f"warm-starting from {warm_start} (curriculum={curriculum})")
         model = PPO.load(str(warm_start), env=vec_env)
         model.tensorboard_log = str(TB_DIR)
+        model.target_kl = 0.02
+        model.ent_coef = 0.0005 if curriculum else 0.0
+        new_lr = 1e-4
+        model.learning_rate = new_lr
+        model.lr_schedule = lambda _: new_lr
+        for pg in model.policy.optimizer.param_groups:
+            pg["lr"] = new_lr
+        if curriculum and hasattr(model.policy, "log_std"):
+            model.policy.log_std.data.fill_(-1.1)  # std ≈ 0.33，围绕站姿重新探索迈步
     else:
+        # 针对 SB3 无界高斯 + 外层 action.clip(-1, 1) 的修复：
+        # 1) ent_coef=0.0005 / 0.0 + LogStdClampCallback 堵死 std 膨胀刷熵；
+        # 2) net_arch=[256, 256] 匹配 540 维 15 帧堆叠观测；
+        # 3) target_kl=0.02 防止小 std 下更新过猛；log_std_init=-0.7 降低初期抽搐。
         model = PPO(
             "MlpPolicy",
             vec_env,
             n_steps=2048,
             batch_size=256,
             n_epochs=4,
-            learning_rate=3e-4,
+            learning_rate=1e-4 if curriculum else 3e-4,
             gamma=0.97,
             gae_lambda=0.95,
             clip_range=0.2,
-            ent_coef=0.01,
+            target_kl=0.02,
+            ent_coef=0.0005 if curriculum else 0.0,
+            policy_kwargs={
+                "net_arch": dict(pi=[256, 256], vf=[256, 256]),
+                "log_std_init": -0.7,
+            },
             tensorboard_log=str(TB_DIR),
             verbose=1,
             seed=seed,
@@ -131,7 +217,8 @@ def train_ppo(
         callback=CallbackList(callbacks_list),
     )
 
-    final_path = PORTFOLIO_DIR / f"{CHECKPOINT_NAME}.zip"
+    final_name = f"{CHECKPOINT_NAME}_cur.zip" if curriculum else f"{CHECKPOINT_NAME}.zip"
+    final_path = PORTFOLIO_DIR / final_name
     model.save(str(final_path))
     vec_env.close()
 
